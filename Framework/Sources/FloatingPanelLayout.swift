@@ -439,52 +439,6 @@ class FloatingPanelLayoutAdapter {
         surfaceView.bottomOverflow = vc.view.bounds.height + layout.topInteractionBuffer
     }
 
-    func updateInteractiveTopConstraint(diff: CGFloat, allowsTopBuffer: Bool, with behavior: FloatingPanelBehavior) {
-        defer {
-            surfaceView.superview!.layoutIfNeeded() // MUST call here to update `surfaceView.frame`
-        }
-
-        let topMostConst: CGFloat = {
-            var ret: CGFloat = 0.0
-            switch layout.positionReference {
-            case .fromSafeArea:
-                ret = topY - safeAreaInsets.top
-            case .fromSuperview:
-                ret = topY
-            }
-            return max(ret, 0.0) // The top boundary is equal to the related topAnchor.
-        }()
-        let bottomMostConst: CGFloat = {
-            var ret: CGFloat = 0.0
-            let _bottomY = vc.isRemovalInteractionEnabled ? positionY(for: .hidden) : bottomY
-            switch layout.positionReference {
-            case .fromSafeArea:
-                ret = _bottomY - safeAreaInsets.top
-            case .fromSuperview:
-                ret = _bottomY
-            }
-            return min(ret, surfaceView.superview!.bounds.height)
-        }()
-        let minConst = allowsTopBuffer ? topMostConst - layout.topInteractionBuffer : topMostConst
-        let maxConst = bottomMostConst + layout.bottomInteractionBuffer
-
-        var const = initialConst + diff
-
-        // Rubberbanding top buffer
-        if behavior.allowsRubberBanding(for: .top), const < topMostConst {
-            let buffer = topMostConst - const
-            const = topMostConst - rubberbandEffect(for: buffer, base: vc.view.bounds.height)
-        }
-
-        // Rubberbanding bottom buffer
-        if behavior.allowsRubberBanding(for: .bottom), const > bottomMostConst {
-            let buffer = const - bottomMostConst
-            const = bottomMostConst + rubberbandEffect(for: buffer, base: vc.view.bounds.height)
-        }
-
-        interactiveTopConstraint?.constant = max(minConst, min(maxConst, const))
-    }
-
     // According to @chpwn's tweet: https://twitter.com/chpwn/status/285540192096497664
     // x = distance from the edge
     // c = constant value, UIScrollView uses 0.55

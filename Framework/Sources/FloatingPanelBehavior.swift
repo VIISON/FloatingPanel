@@ -28,7 +28,7 @@ public protocol FloatingPanelBehavior {
     /// By default, it returns a non-interruptible animator to prevent a propagation of the animation to a content view.
     /// However returning an interruptible animator is working well depending on a content view and it can be better
     /// than using a non-interruptible one.
-    func interactionAnimator(_ fpc: FloatingPanelController, to targetPosition: FloatingPanelPosition, with velocity: CGVector) -> UIViewPropertyAnimator
+    func interactionAnimator(_ fpc: FloatingPanelController, between position1: FloatingPanelPosition, and position2: FloatingPanelPosition, with velocity: CGVector) -> UIViewPropertyAnimator
 
     /// Returns a UIViewPropertyAnimator object to add a floating panel to a position.
     ///
@@ -87,8 +87,8 @@ public extension FloatingPanelBehavior {
         return 0.5
     }
 
-    func interactionAnimator(_ fpc: FloatingPanelController, to targetPosition: FloatingPanelPosition, with velocity: CGVector) -> UIViewPropertyAnimator {
-        return defaultBehavior.interactionAnimator(fpc, to: targetPosition, with: velocity)
+    func interactionAnimator(_ fpc: FloatingPanelController, between position1: FloatingPanelPosition, and position2: FloatingPanelPosition, with velocity: CGVector) -> UIViewPropertyAnimator {
+        return defaultBehavior.interactionAnimator(fpc, between: position1, and: position2, with: velocity)
     }
 
     func addAnimator(_ fpc: FloatingPanelController, to: FloatingPanelPosition) -> UIViewPropertyAnimator {
@@ -129,10 +129,9 @@ private let defaultBehavior = FloatingPanelDefaultBehavior()
 public class FloatingPanelDefaultBehavior: FloatingPanelBehavior {
     public init() { }
 
-    public func interactionAnimator(_ fpc: FloatingPanelController, to targetPosition: FloatingPanelPosition, with velocity: CGVector) -> UIViewPropertyAnimator {
+    public func interactionAnimator(_ fpc: FloatingPanelController, between position1: FloatingPanelPosition, and position2: FloatingPanelPosition, with velocity: CGVector) -> UIViewPropertyAnimator {
         let timing = timeingCurve(with: velocity)
         let animator = UIViewPropertyAnimator(duration: 0, timingParameters: timing)
-        animator.isInterruptible = false // Prevent a propagation of the animation(spring etc) to a content view
         return animator
     }
 
