@@ -279,7 +279,7 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
         // Direction of drag
         let velocity = panGesture.velocity(in: panGesture.view)
         // Vector of starting point of drag and current finger position on screen
-        let translation = panGesture.translation(in: panGestureRecognizer.view!.superview)
+        let translation = panGesture.translation(in: panGesture.view!.superview)
 
         switch panGesture {
         case scrollView?.panGestureRecognizer:
@@ -349,6 +349,12 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
                         if grabberAreaFrame.contains(location), grabberAreaFrame.contains(initialLocation) {
                             scrollView.setContentOffset(initialScrollOffset, animated: false)
                         }
+
+                        // Check the scrollView's contentOffset in order to determine whether or not to start a new animation
+                        // This is necessary to ensure a new animation is not started when the floating panel is at the
+                        // top but the scrollView is not.
+                        self.alreadyMovedTranslationOfPan = translation
+                        self.animateFloatingPanel(with: velocity, translation: translation)
                     }
                 }
             }
@@ -385,26 +391,10 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
                     startInteraction(with: translation, at: location)
                 }
 
-                if let scrollView = self.scrollView {
-                    // Check the scrollView's contentOffset in order to determine whether or not to start a new animation
-                    // This is necessary to ensure a new animation is not started when the floating panel is at the
-                    // top but the scrollView is not.
-                    if interactionInProgress && scrollView.contentOffset.y < CGFloat(0) && self.animator == nil {
-                        self.alreadyMovedTranslationOfPan = translation
-                        self.animateFloatingPanel(with: velocity, translation: translation)
-                    }
-                }
-
                 panningChange(translation: translation, velocity: velocity)
             case .ended, .cancelled, .failed:
                 if interactionInProgress == false {
                     startInteraction(with: translation, at: location)
-                    // Workaround: Prevent stopping the surface view b/w anchors if the pan gesture
-                    // doesn't pass through .changed state after an interruptible animator is interrupted.
-                    let dy = translation.y - .leastNonzeroMagnitude
-                    layoutAdapter.updateInteractiveTopConstraint(diff: dy,
-                                                                 allowsTopBuffer: true,
-                                                                 with: behavior)
                 }
                 panningEnd(with: translation, velocity: velocity)
             default:
@@ -422,7 +412,7 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
         log.debug("startAnimation to \(targetPosition) -- distance = \(distance), velocity = \(velocity.y)")
 
         isDecelerating = true
-        viewcontroller.delegate?.floatingPanelWillBeginDecelerating(viewcontroller)
+        viewcontroller!.delegate?.floatingPanelWillBeginDecelerating(viewcontroller!)
 
         self.startNewAnimator(for: distance, with: velocity, movingTo: targetPosition)
     }
@@ -526,7 +516,7 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
 
     private func panningChange(translation: CGPoint, velocity: CGPoint) {
         log.debug("panningChange -- translation = \(translation.y)")
-        //TODO: Fix backdrop alpha
+
         guard let animator = self.animator else {
             return
         }
@@ -538,13 +528,7 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
 
         // In order to still use the correct value for the fraction (-> value between 0 and 1) when the panel is moved
         // downwards we need to multiply it by -1.
-        if (self.state == .full && self.nextState == .half) || (self.state == .half && self.nextState == .tip) {
-            fraction *= -1
-        }
-
-        // In order to still use the correct value for the fraction (-> value between 0 and 1) we need to multiply it
-        // by -1 when the animator is reversed
-        if animator.isReversed {
+        if ((self.state == .full && self.nextState == .half) || (self.state == .half && self.nextState == .tip)) {
             fraction *= -1
         }
 
@@ -559,12 +543,15 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
         // starting point.
         // There are two cases here since the user could drag the panel eg. from .tip over .half to .full but change
         // directions midway between .half and .full and drag the panel back downards.
-        if (animator.fractionComplete == 1) || (fraction < 0 && self.nextState != self.state) {
-            self.state = (fraction < 0) ? self.state : self.nextState
+        if (animator.fractionComplete == 1) || (animator.fractionComplete == 0 && self.nextState != self.state) {
+            self.state = (animator.fractionComplete == 0) ? self.state : self.nextState
             let newTargetState = self.nextPosition(with: velocity)
             let distance = self.distance(to: newTargetState)
 
-            self.startNewAnimator(for: distance, with: velocity, movingTo: newTargetState)
+            if newTargetState != self.nextState && newTargetState != self.state {
+                self.startNewAnimator(for: distance, with: velocity, movingTo: newTargetState)
+            }
+
             // Since the drag is already in progress we need 'save' the already travelled distance on the screen in
             // order to calculate the correct translation when calcualting the fraction (-> progress) of the animator.
             // Otherwise the panel 'jumps' from its current position to the finger's position on the screen.
@@ -574,14 +561,14 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
         self.preserveContentVCLayoutIfNeeded()
         // Determine whether or not the panel has actually moved.
         if animator.fractionComplete != previousFractionComplete {
-            viewcontroller.delegate?.floatingPanelDidMove(viewcontroller)
+            viewcontroller!.delegate?.floatingPanelDidMove(viewcontroller!)
         }
     }
 
     private func startNewAnimator(for distance: CGFloat, with velocity: CGPoint, movingTo targetState: FloatingPanelPosition) {
         let velocityVector = (distance != CGFloat(0)) ? CGVector(dx: 0, dy: min(abs(velocity.y)/distance, 30.0)) : .zero
 
-        let animator = behavior.interactionAnimator(self.viewcontroller, between: self.state, and: targetState, with: velocityVector)
+        let animator = behavior.interactionAnimator(self.viewcontroller!, between: self.state, and: targetState, with: velocityVector)
         animator.addAnimations { [weak self] in
             guard let `self` = self else { return }
             // Set layout (-> therefor the top constraint of the FloatingPanel) to the next upcoming state in order to
@@ -590,12 +577,16 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
         }
         animator.addCompletion { [weak self] pos in
             guard let `self` = self else { return }
-            if pos == .end && self.animator?.isReversed == false {
+            if pos == .end, let animator = self.animator, !animator.isReversed {
                 self.state = self.nextState
             }
             // Set layout again to ensure that the panel's top constraint corresponds with the desired state.
             self.updateLayout(to: self.state)
             self.animationDidComplete(at: self.state)
+        }
+
+        if self.state == targetState {
+            return
         }
 
         self.animator = animator
@@ -711,18 +702,21 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
         if let vc = viewcontroller {
             vc.delegate?.floatingPanelDidEndDragging(vc, withVelocity: velocity, targetPosition: targetPosition)
         }
-        //TODO: Review
-        if scrollView != nil, !stopScrollDeceleration,
-            surfaceView.frame.minY == layoutAdapter.topY,
-            targetPosition == layoutAdapter.topMostState {
-            self.state = targetPosition
-            self.updateLayout(to: targetPosition)
-            self.unlockScrollView()
-            return
-        }
 
         guard let animator = self.animator else {
             return
+        }
+
+        if
+            scrollView != nil,
+            !stopScrollDeceleration,
+            surfaceView.frame.minY == layoutAdapter.topY,
+            targetPosition == layoutAdapter.topMostState,
+            animator.fractionComplete > 0.5
+        {
+            self.state = targetPosition
+            self.updateLayout(to: targetPosition)
+            self.unlockScrollView()
         }
 
         // Workaround: Disable a tracking scroll to prevent bouncing a scroll content in a panel animating
