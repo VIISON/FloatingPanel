@@ -159,6 +159,7 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
     private func updateLayout(to target: FloatingPanelPosition) {
         self.layoutAdapter.activateFixedLayout()
         self.layoutAdapter.activateInteractiveLayout(of: target)
+        self.viewcontroller?.view.layoutIfNeeded()
     }
 
     func getBackdropAlpha(at currentY: CGFloat, with translation: CGPoint) -> CGFloat {
@@ -349,13 +350,15 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
                         if grabberAreaFrame.contains(location), grabberAreaFrame.contains(initialLocation) {
                             scrollView.setContentOffset(initialScrollOffset, animated: false)
                         }
-
-                        // Check the scrollView's contentOffset in order to determine whether or not to start a new animation
-                        // This is necessary to ensure a new animation is not started when the floating panel is at the
-                        // top but the scrollView is not.
-                        self.alreadyMovedTranslationOfPan = translation
-                        self.animateFloatingPanel(with: velocity, translation: translation)
                     }
+                }
+
+                if offset < 0 && velocity.y > 0 {
+                    // Check the scrollView's contentOffset in order to determine whether or not to start a new animation
+                    // This is necessary to ensure a new animation is not started when the floating panel is at the
+                    // top but the scrollView is not.
+                    self.alreadyMovedTranslationOfPan = translation
+                    self.animateFloatingPanel(with: velocity, translation: translation)
                 }
             }
 
@@ -709,9 +712,12 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
             targetPosition == layoutAdapter.topMostState,
             animator.fractionComplete > 0.5
         {
+            animator.continueAnimation(withTimingParameters: nil, durationFactor: 0)
             self.state = targetPosition
             self.updateLayout(to: targetPosition)
             self.unlockScrollView()
+
+            return
         }
 
         // Workaround: Disable a tracking scroll to prevent bouncing a scroll content in a panel animating
