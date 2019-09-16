@@ -410,7 +410,7 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
         log.debug("startAnimation to \(targetPosition) -- distance = \(distance), velocity = \(velocity.y)")
 
         self.isDecelerating = true
-        self.viewcontroller!.delegate?.floatingPanelWillBeginDecelerating(viewcontroller!)
+        self.viewcontroller!.delegate?.floatingPanelWillBeginDecelerating(self.viewcontroller!)
 
         self.startNewAnimator(for: distance, with: velocity, movingTo: targetPosition)
     }
@@ -454,7 +454,7 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
         }
 
         // When initialLocation not in scrollView and when point within grabber area, don't scroll.
-        if !scrollView.frame.contains(initialLocation) && grabberAreaFrame.contains(point) {
+        if !scrollView.frame.contains(initialLocation) || grabberAreaFrame.contains(point) {
             return false
         }
 
@@ -554,12 +554,12 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
         self.preserveContentVCLayoutIfNeeded()
         // Determine whether or not the panel has actually moved.
         if animator.fractionComplete != previousFractionComplete {
-            self.viewcontroller!.delegate?.floatingPanelDidMove(viewcontroller!)
+            self.viewcontroller!.delegate?.floatingPanelDidMove(self.viewcontroller!)
         }
     }
 
     private func startNewAnimator(for distance: CGFloat, with velocity: CGPoint, movingTo targetState: FloatingPanelPosition) {
-        guard !(self.state == targetState) else {
+        guard self.state != targetState else {
             return
         }
 
