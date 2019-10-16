@@ -57,12 +57,7 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
         fileprivate var totalYTranslation: CGFloat
         fileprivate var nextState: FloatingPanelPosition
     }
-    private var panGestureContext: PanGestureContext? {
-        didSet {
-            print("state: \(self.state)")
-            print("next state: \(self.panGestureContext?.nextState)")
-        }
-    }
+    private var panGestureContext: PanGestureContext?
 
     // Scroll handling
     private var initialScrollOffset: CGPoint = .zero
@@ -137,9 +132,7 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
             animator.addAnimations { [weak self] in
                 guard let `self` = self else { return }
 
-                print("move - addAnimations - old state: \(self.state)")
                 self.state = to
-                print("move - addAnimations - new state: \(self.state)")
                 self.updateLayout(to: to)
             }
             animator.addCompletion { [weak self] _ in
@@ -155,9 +148,7 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
             self.animator = animator
             animator.startAnimation()
         } else {
-            print("move - addAnimations else - old state: \(self.state)")
             self.state = to
-            print("move - addAnimations else - new state: \(self.state)")
             self.updateLayout(to: to)
             if self.state == self.layoutAdapter.topMostState {
                 self.unlockScrollView()
@@ -493,8 +484,6 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
 
     private func nextPosition(with velocity: CGPoint) -> FloatingPanelPosition {
         let isPanelMovingUpwards = velocity.y < CGFloat(0)
-        print("velocity: \(velocity.y)")
-        print("isPanelMovingUpwards: \(isPanelMovingUpwards)")
 
         switch self.state {
         case .full:
@@ -586,11 +575,8 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
         // There are two cases here since the user could drag the panel eg. from .tip over .half to .full but change
         // directions midway between .half and .full and drag the panel back downards.
         if (animator.fractionComplete == 1) || (animator.fractionComplete == 0 && panGestureContext.nextState != self.state) {
-            print("panningChange - old state = \(self.state)")
             self.state = panGestureContext.nextState
-            print("panningChange - new state = \(self.state)")
             let newTargetState = self.nextPosition(with: velocity)
-            print("new target state: \(newTargetState)")
             let distance = self.distance(to: newTargetState)
 
             if newTargetState != panGestureContext.nextState && newTargetState != self.state {
@@ -633,9 +619,7 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
         animator.addCompletion { [weak self] pos in
             guard let `self` = self else { return }
             if pos == .end, let animator = self.animator, !animator.isReversed {
-                print("animatior completion - old state: \(self.state)")
                 self.state = panGestureContext.nextState
-                print("animatior completion - new state: \(self.state)")
             }
             // Set layout again to ensure that the panel's top constraint corresponds with the desired state.
             self.updateLayout(to: self.state)
@@ -725,7 +709,6 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
 
         defer {
             let targetPosition = self.targetPosition(from: surfaceView.frame.minY, with: velocity)
-            print("defer - target position: \(targetPosition)")
             self.updateLayout(to: targetPosition)
             self.panGestureContext = nil
         }
@@ -745,7 +728,6 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
 
         let currentY = surfaceView.frame.minY
         let targetPosition = self.targetPosition(from: currentY, with: velocity)
-        print("panningEnd - target position: \(targetPosition)")
         let distance = self.distance(to: targetPosition)
 
         endInteraction(for: targetPosition)
@@ -780,9 +762,7 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
             animator.fractionComplete > 0.5
         {
             animator.continueAnimation(withTimingParameters: nil, durationFactor: 0)
-            print("panningEnd - old state: \(self.state)")
             self.state = targetPosition
-            print("panningEnd - new state: \(self.state)")
             self.unlockScrollView()
 
             return
@@ -800,7 +780,6 @@ class FloatingPanel: NSObject, UIGestureRecognizerDelegate {
             // point the panel moves back to its original state which means that the animation needs to be reversed aka
             // played backwards.
             animator.isReversed = animator.fractionComplete < 0.5
-            print("animator is reversed: \(animator.isReversed)")
         }
         // Since the user stopped moving the panel, we need to let the animator finish the animation completely.
         animator.continueAnimation(withTimingParameters: nil, durationFactor: 0)
