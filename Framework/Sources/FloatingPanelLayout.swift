@@ -11,7 +11,7 @@ import UIKit
 /// It can't be used with FloatingPanelIntrinsicLayout.
 public protocol FloatingPanelFullScreenLayout: FloatingPanelLayout { }
 
-extension FloatingPanelFullScreenLayout {
+public extension FloatingPanelFullScreenLayout {
     var positionReference: FloatingPanelLayoutReference {
         return .fromSuperview
     }
@@ -94,6 +94,7 @@ public protocol FloatingPanelLayout: class {
     func backdropAlphaFor(position: FloatingPanelPosition) -> CGFloat
 
     var positionReference: FloatingPanelLayoutReference { get }
+
 }
 
 public extension FloatingPanelLayout {
@@ -208,6 +209,10 @@ class FloatingPanelLayoutAdapter {
 
     var supportedPositions: Set<FloatingPanelPosition> {
         return layout.supportedPositions
+    }
+
+    var validPositions: Set<FloatingPanelPosition> {
+        return supportedPositions.union([.hidden])
     }
 
     var topMostState: FloatingPanelPosition {
@@ -397,8 +402,8 @@ class FloatingPanelLayoutAdapter {
         // unsatisfiable constraints
 
         if self.interactiveTopConstraint == nil {
-            // Actiavate `interactiveTopConstraint` for `fitToBounds` mode.
-            // It goes throught this path when the pan gesture state jumps
+            // Activate `interactiveTopConstraint` for `fitToBounds` mode.
+            // It goes through this path when the pan gesture state jumps
             // from .begin to .end.
             startInteraction(at: state)
         }
@@ -439,6 +444,52 @@ class FloatingPanelLayoutAdapter {
         surfaceView.bottomOverflow = vc.view.bounds.height + layout.topInteractionBuffer
     }
 
+    func updateInteractiveTopConstraint(diff: CGFloat, allowsTopBuffer: Bool, with behavior: FloatingPanelBehavior) {
+        defer {
+            layoutSurfaceIfNeeded() // MUST be called to update `surfaceView.frame`
+        }
+
+        let topMostConst: CGFloat = {
+            var ret: CGFloat = 0.0
+            switch layout.positionReference {
+            case .fromSafeArea:
+                ret = topY - safeAreaInsets.top
+            case .fromSuperview:
+                ret = topY
+            }
+            return ret
+        }()
+        let bottomMostConst: CGFloat = {
+            var ret: CGFloat = 0.0
+            let _bottomY = vc.isRemovalInteractionEnabled ? positionY(for: .hidden) : bottomY
+            switch layout.positionReference {
+            case .fromSafeArea:
+                ret = _bottomY - safeAreaInsets.top
+            case .fromSuperview:
+                ret = _bottomY
+            }
+            return ret
+        }()
+        let minConst = allowsTopBuffer ? topMostConst - layout.topInteractionBuffer : topMostConst
+        let maxConst = bottomMostConst + layout.bottomInteractionBuffer
+
+        var const = initialConst + diff
+
+        // Rubberbanding top buffer
+        if behavior.allowsRubberBanding(for: .top), const < topMostConst {
+            let buffer = topMostConst - const
+            const = topMostConst - rubberbandEffect(for: buffer, base: vc.view.bounds.height)
+        }
+
+        // Rubberbanding bottom buffer
+        if behavior.allowsRubberBanding(for: .bottom), const > bottomMostConst {
+            let buffer = const - bottomMostConst
+            const = bottomMostConst + rubberbandEffect(for: buffer, base: vc.view.bounds.height)
+        }
+
+        interactiveTopConstraint?.constant = max(minConst, min(maxConst, const))
+    }
+
     // According to @chpwn's tweet: https://twitter.com/chpwn/status/285540192096497664
     // x = distance from the edge
     // c = constant value, UIScrollView uses 0.55
@@ -461,7 +512,7 @@ class FloatingPanelLayoutAdapter {
 
     func activateInteractiveLayout(of state: FloatingPanelPosition) {
         defer {
-            surfaceView.superview!.layoutIfNeeded()
+            layoutSurfaceIfNeeded()
             log.debug("activateLayout -- surface.presentation = \(self.surfaceView.presentationFrame) surface.frame = \(self.surfaceView.frame)")
         }
 
@@ -469,7 +520,7 @@ class FloatingPanelLayoutAdapter {
 
         setBackdropAlpha(of: state)
 
-        if isValid(state) == false {
+        if validPositions.contains(state) == false {
             state = layout.initialPosition
         }
 
@@ -491,8 +542,11 @@ class FloatingPanelLayoutAdapter {
         activateInteractiveLayout(of: state)
     }
 
-    func isValid(_ state: FloatingPanelPosition) -> Bool {
-        return supportedPositions.union([.hidden]).contains(state)
+    private func layoutSurfaceIfNeeded() {
+        #if !TEST
+        guard surfaceView.window != nil else { return }
+        #endif
+        surfaceView.superview?.layoutIfNeeded()
     }
 
     private func setBackdropAlpha(of target: FloatingPanelPosition) {
@@ -506,8 +560,8 @@ class FloatingPanelLayoutAdapter {
     private func checkLayoutConsistance() {
         // Verify layout configurations
         assert(supportedPositions.count > 0)
-        assert(supportedPositions.contains(layout.initialPosition),
-               "Does not include an initial position (\(layout.initialPosition)) in supportedPositions (\(supportedPositions))")
+        assert(validPositions.contains(layout.initialPosition),
+               "Does not include an initial position (\(layout.initialPosition)) in (\(validPositions))")
 
         if layout is FloatingPanelIntrinsicLayout {
             assert(layout.insetFor(position: .full) == nil, "Return `nil` for full position on FloatingPanelIntrinsicLayout")
