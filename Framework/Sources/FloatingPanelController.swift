@@ -37,6 +37,15 @@ public protocol FloatingPanelControllerDelegate: class {
     ///
     /// By default, any tap and long gesture recognizers are allowed to recognize gestures simultaneously.
     func floatingPanel(_ vc: FloatingPanelController, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool
+
+    /// Asks the delegate for a content offset of the tracked scroll view to be pinned when a floating panel moves
+    ///
+    /// If you do not implement this method, the controller uses a value of the content offset plus the content insets
+    /// of the tracked scroll view. Your implementation of this method can return a value for a navigation bar with a large
+    /// title, for example.
+    ///
+    /// This method will not be called if the controller doesn't track any scroll view.
+    func floatingPanel(_ vc: FloatingPanelController, contentOffsetForPinning trackedScrollView: UIScrollView) -> CGPoint
 }
 
 public extension FloatingPanelControllerDelegate {
@@ -61,6 +70,9 @@ public extension FloatingPanelControllerDelegate {
 
     func floatingPanel(_ vc: FloatingPanelController, shouldRecognizeSimultaneouslyWith gestureRecognizer: UIGestureRecognizer) -> Bool {
         return false
+    }
+    func floatingPanel(_ vc: FloatingPanelController, contentOffsetForPinning trackedScrollView: UIScrollView) -> CGPoint {
+        return CGPoint(x: 0.0, y: 0.0 - trackedScrollView.contentInset.top)
     }
 }
 
@@ -109,7 +121,7 @@ public enum FloatingPanelPosition: Int {
 ///
 /// A container view controller to display a floating panel to present contents in parallel as a user wants.
 ///
-open class FloatingPanelController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+open class FloatingPanelController: UIViewController {
     /// Constants indicating how safe area insets are added to the adjusted content inset.
     public enum ContentInsetAdjustmentBehavior: Int {
         case always
@@ -187,7 +199,13 @@ open class FloatingPanelController: UIViewController, UIScrollViewDelegate, UIGe
         set { set(contentViewController: newValue) }
         get { return _contentViewController }
     }
-
+    
+    /// The NearbyPosition determines that finger's nearby position.
+    public var nearbyPosition: FloatingPanelPosition {
+        let currentY = surfaceView.frame.minY
+        return floatingPanel.targetPosition(from: currentY, with: .zero)
+    }
+    
     public var contentMode: ContentMode = .static {
         didSet {
             guard position != .hidden else { return }
@@ -197,7 +215,7 @@ open class FloatingPanelController: UIViewController, UIScrollViewDelegate, UIGe
 
     private var _contentViewController: UIViewController?
 
-    private(set) var floatingPanel: FloatingPanel!
+    private(set) var floatingPanel: FloatingPanelCore!
     private var preSafeAreaInsets: UIEdgeInsets = .zero // Capture the latest one
     private var safeAreaInsetsObservation: NSKeyValueObservation?
     private let modalTransition = FloatingPanelModalTransition()
@@ -220,7 +238,7 @@ open class FloatingPanelController: UIViewController, UIScrollViewDelegate, UIGe
         modalPresentationStyle = .custom
         transitioningDelegate = modalTransition
 
-        floatingPanel = FloatingPanel(self,
+        floatingPanel = FloatingPanelCore(self,
                                       layout: fetchLayout(for: self.traitCollection),
                                       behavior: fetchBehavior(for: self.traitCollection))
     }
@@ -229,7 +247,7 @@ open class FloatingPanelController: UIViewController, UIScrollViewDelegate, UIGe
         floatingPanel.layoutAdapter.layout = fetchLayout(for: traitCollection)
         floatingPanel.behavior = fetchBehavior(for: self.traitCollection)
     }
-    
+
     // MARK:- Overrides
 
     /// Creates the view that the controller manages.
@@ -279,6 +297,41 @@ open class FloatingPanelController: UIViewController, UIScrollViewDelegate, UIGe
         safeAreaInsetsObservation = nil
     }
 
+    // MARK:- Child view controller to consult
+    #if swift(>=4.2)
+    open override var childForStatusBarStyle: UIViewController? {
+        return contentViewController
+    }
+
+    open override var childForStatusBarHidden: UIViewController? {
+        return contentViewController
+    }
+
+    open override var childForScreenEdgesDeferringSystemGestures: UIViewController? {
+        return contentViewController
+    }
+
+    open override var childForHomeIndicatorAutoHidden: UIViewController? {
+        return contentViewController
+    }
+    #else
+    open override var childViewControllerForStatusBarStyle: UIViewController? {
+        return contentViewController
+    }
+
+    open override var childViewControllerForStatusBarHidden: UIViewController? {
+        return contentViewController
+    }
+
+    open override func childViewControllerForScreenEdgesDeferringSystemGestures() -> UIViewController? {
+        return contentViewController
+    }
+
+    open override func childViewControllerForHomeIndicatorAutoHidden() -> UIViewController? {
+        return contentViewController
+    }
+    #endif
+
     // MARK:- Internals
     func prepare(for newCollection: UITraitCollection) {
         guard newCollection.shouldUpdateLayout(from: traitCollection) else { return }
@@ -318,7 +371,6 @@ open class FloatingPanelController: UIViewController, UIScrollViewDelegate, UIGe
         switch contentInsetAdjustmentBehavior {
         case .always:
             scrollView?.contentInset = adjustedContentInsets
-            scrollView?.scrollIndicatorInsets = adjustedContentInsets
         default:
             break
         }
@@ -340,13 +392,18 @@ open class FloatingPanelController: UIViewController, UIScrollViewDelegate, UIGe
     private func activateLayout() {
         floatingPanel.layoutAdapter.prepareLayout(in: self)
 
-        // preserve the current content offset
-        let contentOffset = scrollView?.contentOffset
+        // preserve the current content offset if contentInsetAdjustmentBehavior is `.always`
+        var contentOffset: CGPoint?
+        if contentInsetAdjustmentBehavior == .always {
+            contentOffset = scrollView?.contentOffset
+        }
 
         floatingPanel.layoutAdapter.updateHeight()
         floatingPanel.layoutAdapter.activateLayout(of: floatingPanel.state)
 
-        scrollView?.contentOffset = contentOffset ?? .zero
+        if let contentOffset = contentOffset {
+            scrollView?.contentOffset = contentOffset
+        }
     }
 
     // MARK: - Container view controller interface
@@ -364,9 +421,11 @@ open class FloatingPanelController: UIViewController, UIScrollViewDelegate, UIGe
             // inset's update expectedly.
             // 2. The safe area top inset can be variable on the large title navigation bar(iOS11+).
             // That's why it needs the observation to keep `adjustedContentInsets` correct.
-            safeAreaInsetsObservation = self.observe(\.view.safeAreaInsets, options: [.initial, .new, .old]) { [weak self] (vc, change) in
-                guard change.oldValue != change.newValue else { return }
-                self?.update(safeAreaInsets: vc.layoutInsets)
+            safeAreaInsetsObservation = self.view.observe(\.safeAreaInsets, options: [.initial, .new, .old]) { [weak self] (_, change) in
+                // Use `self.view.safeAreaInsets` becauese `change.newValue` can be nil in particular case when
+                // is reported in https://github.com/SCENEE/FloatingPanel/issues/330
+                guard let `self` = self, change.oldValue != self.view.safeAreaInsets else { return }
+                self.update(safeAreaInsets: self.view.safeAreaInsets)
             }
         } else {
             // KVOs for topLayoutGuide & bottomLayoutGuide are not effective.
@@ -425,9 +484,9 @@ open class FloatingPanelController: UIViewController, UIScrollViewDelegate, UIGe
         show(animated: animated) { [weak self] in
             guard let `self` = self else { return }
             #if swift(>=4.2)
-            self.didMove(toParent: self)
+            self.didMove(toParent: parent)
             #else
-            self.didMove(toParentViewController: self)
+            self.didMove(toParentViewController: parent)
             #endif
         }
     }
@@ -611,7 +670,8 @@ public extension UIViewController {
         }
         // Call dismiss(animated:completion:) to FloatingPanelController directly
         if let fpc = self as? FloatingPanelController {
-            if fpc.presentingViewController != nil {
+            // When a panel is presented modally and it's not a child view controller of the presented view controller.
+            if fpc.presentingViewController != nil, fpc.parent == nil {
                 self.fp_original_dismiss(animated: flag, completion: completion)
             } else {
                 fpc.removePanelFromParent(animated: flag, completion: completion)
