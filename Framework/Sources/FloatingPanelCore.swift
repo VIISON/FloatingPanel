@@ -333,7 +333,7 @@ class FloatingPanelCore: NSObject, UIGestureRecognizerDelegate {
 
             // Location of finger in surfaceView -> on the FloatingPanel
             let location = panGesture.location(in: surfaceView)
-            let offset = scrollView.contentOffset.y - scrollView.contentOffsetZero.y
+            let offset = scrollView.contentOffset.y - scrollView.contentOffset.y
 
             let surfaceMinY = surfaceView.presentationFrame.minY
             let adapterTopY = layoutAdapter.topY
@@ -343,8 +343,6 @@ class FloatingPanelCore: NSObject, UIGestureRecognizerDelegate {
                 "interactionInProgress = \(interactionInProgress),",
                 "scroll offset = \(scrollView.contentOffset.y),",
                 "location = \(location.y), velocity = \(velocity.y)")
-
-            let offset = scrollView.contentOffset.y - contentOrigin(of: scrollView).y
 
             if belowTop {
                 // Scroll offset pinning
@@ -699,6 +697,28 @@ class FloatingPanelCore: NSObject, UIGestureRecognizerDelegate {
         self.panGestureContext = panGestureContext
     }
 
+    private func animationDidComplete(at targetPosition: FloatingPanelPosition) {
+        log.debug("animationDidComplete to \(targetPosition)")
+
+        self.isDecelerating = false
+        self.animator = nil
+
+        if let vc = viewcontroller {
+            vc.delegate?.floatingPanelDidEndDecelerating(vc)
+        }
+
+        if let scrollView = scrollView {
+            log.debug("animationDidComplete -- scroll offset = \(scrollView.contentOffset)")
+        }
+
+        stopScrollDeceleration = false
+
+        log.debug("finishAnimation -- state = \(state) surface.minY = \(surfaceView.presentationFrame.minY) topY = \(layoutAdapter.topY)")
+        if state == layoutAdapter.topMostState, abs(surfaceView.presentationFrame.minY - layoutAdapter.topY) <= 1.0 {
+            unlockScrollView()
+        }
+    }
+
     private func allowsTopBuffer(for translationY: CGFloat) -> Bool {
         let preY = surfaceView.frame.minY
         let nextY = initialFrame.offsetBy(dx: 0.0, dy: translationY).minY
@@ -815,12 +835,6 @@ class FloatingPanelCore: NSObject, UIGestureRecognizerDelegate {
 
         guard let animator = self.animator else {
             return
-        }
-
-        if
-            scrollView != nil,
-            !stopScrollDeceleration,
-            }
         }
 
         if scrollView != nil, !stopScrollDeceleration,
@@ -964,7 +978,13 @@ class FloatingPanelCore: NSObject, UIGestureRecognizerDelegate {
         vc.delegate?.floatingPanelWillBeginDecelerating(vc)
 
         let velocityVector = (distance != 0) ? CGVector(dx: 0, dy: velocity.y / distance) : .zero
-        let animator = behavior.interactionAnimator(vc, to: targetPosition, with: velocityVector)
+        let animator = behavior.interactionAnimator(
+            vc,
+            between: self.state,
+            and: self.nextPosition(with: velocity),
+            with: velocityVector
+        )
+
         animator.addAnimations { [weak self] in
             guard let `self` = self, let vc = self.viewcontroller else { return }
             self.state = targetPosition
