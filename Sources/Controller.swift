@@ -26,6 +26,14 @@ import UIKit
     @objc(floatingPanel:animatorForDismissingWithVelocity:) optional
     func floatingPanel(_ fpc: FloatingPanelController, animatorForDismissingWith velocity: CGVector) -> UIViewPropertyAnimator
 
+    /// Returns a UIViewPropertyAnimator object to animate content based on a user's drag from tip to half position
+    @objc optional
+    func floatingPanelDragBasedAnimationBetweenTipAndHalf(_ fpc: FloatingPanelController) -> (() -> Void)
+
+    /// Returns a UIViewPropertyAnimator object to animate content based on a user's drag from half to full position
+    @objc optional
+    func floatingPanelDragBasedAnimationBetweenHalfAndFull(_ fpc: FloatingPanelController) -> (() -> Void)
+
     /// Called when a panel has changed to a new position. Can be called inside an animation block, so any
     /// view properties set inside this function will be automatically animated alongside a panel.
     @objc optional
@@ -284,6 +292,51 @@ open class FloatingPanelController: UIViewController {
         view.addSubview(surfaceView)
 
         self.view = view as UIView
+    }
+
+    open override func viewDidLoad() {
+        super.viewDidLoad()
+
+//        self.floatingPanel.dragDependentAnimators.tipToHalfAnimator.addObserver(
+//            self,
+//            forKeyPath: #keyPath(UIViewPropertyAnimator.isRunning),
+//            options: [.new],
+//            context: nil
+//        )
+//
+//        self.floatingPanel.dragDependentAnimators.halfToFullAnimator.addObserver(
+//            self,
+//            forKeyPath: #keyPath(UIViewPropertyAnimator.isRunning),
+//            options: [.new],
+//            context: nil
+//        )
+
+        self.floatingPanel.dragDependentAnimators.tipToHalfAnimator.addAnimations(
+            self.delegate?.floatingPanelDragBasedAnimationBetweenTipAndHalf?(self) ?? { }
+        )
+
+        self.floatingPanel.dragDependentAnimators.halfToFullAnimator.addAnimations(
+            self.delegate?.floatingPanelDragBasedAnimationBetweenHalfAndFull?(self) ?? { }
+        )
+    }
+
+    open override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
+        if keyPath == #keyPath(UIViewPropertyAnimator.isRunning) {
+            if let animator = object as? CustomerPropertyAnimator, animator === self.floatingPanel.dragDependentAnimators.tipToHalfAnimator {
+                if !animator.isRunning {
+                    animator.isReversed = !animator.isReversed
+                    self.floatingPanel.progressWhenInterrupted = 0
+                }
+            }
+
+            if let animator = object as? CustomerPropertyAnimator, animator === self.floatingPanel.dragDependentAnimators.halfToFullAnimator {
+                if !animator.isRunning {
+                    animator.isReversed = !animator.isReversed
+                    self.floatingPanel.progressWhenInterrupted = 0
+                }
+            }
+
+        }
     }
 
     open override func viewDidLayoutSubviews() {
