@@ -6,6 +6,26 @@ import UIKit
 /// The presentation model of FloatingPanel
 ///
 class Core: NSObject, UIGestureRecognizerDelegate {
+    struct DragBasedAnimator {
+        var tipToHalfAnimator: CustomerPropertyAnimator
+        var halfToFullAnimator: CustomerPropertyAnimator
+
+        init() {
+            self.tipToHalfAnimator = CustomerPropertyAnimator()
+            self.tipToHalfAnimator.name = "tipToHalfAnimator"
+            self.halfToFullAnimator = CustomerPropertyAnimator()
+            self.halfToFullAnimator.name = "halfToFullAnimator"
+
+            self.tipToHalfAnimator.pausesOnCompletion = true
+            self.tipToHalfAnimator.scrubsLinearly = true
+            self.tipToHalfAnimator.pauseAnimation()
+
+            self.halfToFullAnimator.pausesOnCompletion = true
+            self.halfToFullAnimator.scrubsLinearly = true
+            self.halfToFullAnimator.pauseAnimation()
+        }
+    }
+
     private weak var ownerVC: FloatingPanelController?
 
     let surfaceView: SurfaceView
@@ -32,13 +52,18 @@ class Core: NSObject, UIGestureRecognizerDelegate {
     let panGestureRecognizer: FloatingPanelPanGestureRecognizer
     var isRemovalInteractionEnabled: Bool = false
 
+    // Animators
+    internal var dragDependentAnimators: DragBasedAnimator = DragBasedAnimator()
+    internal var progressWhenInterrupted: CGFloat = 0
+
     fileprivate var animator: UIViewPropertyAnimator?
     fileprivate var moveAnimator: NumericSpringAnimator?
 
     private var initialSurfaceLocation: CGPoint = .zero
     private var initialTranslation: CGPoint = .zero
+
     private var initialLocation: CGPoint {
-        return panGestureRecognizer.initialLocation
+        panGestureRecognizer.initialLocation
     }
 
     var interactionInProgress: Bool = false
@@ -52,8 +77,9 @@ class Core: NSObject, UIGestureRecognizerDelegate {
     private var stopScrollDeceleration: Bool = false
     private var scrollBounce = false
     private var scrollIndictorVisible = false
+
     private var grabberAreaFrame: CGRect {
-        return surfaceView.grabberAreaFrame
+        surfaceView.grabberAreaFrame
     }
 
     // MARK: - Interface
@@ -104,11 +130,12 @@ class Core: NSObject, UIGestureRecognizerDelegate {
             completion?()
             return
         }
+
         if state != layoutAdapter.edgeMostState {
             lockScrollView()
         }
-        tearDownActiveInteraction()
 
+        tearDownActiveInteraction()
         interruptAnimationIfNeeded()
 
         if animated {
@@ -183,15 +210,7 @@ class Core: NSObject, UIGestureRecognizerDelegate {
 
     func getBackdropAlpha(at cur: CGFloat, with translation: CGFloat) -> CGFloat {
         /* log.debug("currentY: \(currentY) translation: \(translation)") */
-        let forwardY = (translation >= 0)
-
-        let segment = layoutAdapter.segment(at: cur, forward: forwardY)
-
-        let lowerState = segment.lower ?? layoutAdapter.edgeMostState
-        let upperState = segment.upper ?? layoutAdapter.edgeLeastState
-
-        let preState = forwardY ? lowerState : upperState
-        let nextState = forwardY ? upperState : lowerState
+        let (preState, nextState) = self.getStateTransition(currentLocation: cur, translation: translation)
 
         let next = value(of: layoutAdapter.surfaceLocation(for: nextState))
         let pre = value(of: layoutAdapter.surfaceLocation(for: preState))
@@ -204,6 +223,19 @@ class Core: NSObject, UIGestureRecognizerDelegate {
         } else {
             return preAlpha + max(min(1.0, 1.0 - (next - cur) / (next - pre) ), 0.0) * (nextAlpha - preAlpha)
         }
+    }
+
+    private func getStateTransition(currentLocation: CGFloat, translation: CGFloat) -> (previousState: FloatingPanelState, nextState: FloatingPanelState) {
+        let forwardY = (translation >= 0)
+        let segment = layoutAdapter.segment(at: currentLocation, forward: forwardY)
+
+        let lowerState = segment.lower ?? layoutAdapter.edgeMostState
+        let upperState = segment.upper ?? layoutAdapter.edgeLeastState
+
+        let previousState = forwardY ? lowerState : upperState
+        let nextState = forwardY ? upperState : lowerState
+
+        return (previousState, nextState)
     }
 
     // MARK: - UIGestureRecognizerDelegate
@@ -270,7 +302,9 @@ class Core: NSObject, UIGestureRecognizerDelegate {
             return result
         }
 
-        guard gestureRecognizer == panGestureRecognizer else { return false }
+        guard gestureRecognizer == panGestureRecognizer else {
+            return false
+        }
 
         // Should begin the pan gesture without waiting for the tracking scroll view's gestures.
         // `scrollView.gestureRecognizers` can contains the following gestures
@@ -303,6 +337,7 @@ class Core: NSObject, UIGestureRecognizerDelegate {
             if let view = otherGestureRecognizer.view, surfaceView.isDescendant(of: view) {
                 return false
             }
+
             return true
         case is UIPanGestureRecognizer,
              is UISwipeGestureRecognizer,
@@ -466,7 +501,7 @@ class Core: NSObject, UIGestureRecognizerDelegate {
                 if interactionInProgress == false {
                     startInteraction(with: translation, at: location)
                 }
-                panningChange(with: translation)
+                panningChange(with: translation, velocity: velocity)
             case .ended, .cancelled, .failed:
                 if interactionInProgress == false {
                     startInteraction(with: translation, at: location)
@@ -588,24 +623,55 @@ class Core: NSObject, UIGestureRecognizerDelegate {
         } else {
             initialScrollOffset = scrollView.contentOffset
         }
+
+//        self.progressWhenInterrupted = self.dragDependentAnimators.tipToHalfAnimator.fractionComplete
     }
 
-    private func panningChange(with translation: CGPoint) {
+    private func panningChange(with translation: CGPoint, velocity: CGPoint) {
         log.debug("panningChange -- translation = \(value(of: translation))")
-        let pre = value(of: layoutAdapter.surfaceLocation)
+        let previousLocation = value(of: layoutAdapter.surfaceLocation)
         let diff = value(of: translation - initialTranslation)
-        let next = pre + diff
-        let overflow = shouldOverflow(from: pre, to: next)
+        let next = previousLocation + diff
+        let overflow = shouldOverflow(from: previousLocation, to: next)
 
         layoutAdapter.updateInteractiveEdgeConstraint(diff: diff,
                                                       overflow: overflow,
                                                       allowsRubberBanding: behaviorAdapter.allowsRubberBanding(for:))
 
-        let cur = value(of: layoutAdapter.surfaceLocation)
+        let currentLocation = value(of: layoutAdapter.surfaceLocation)
 
-        backdropView.alpha = getBackdropAlpha(at: cur, with: value(of: translation))
+        let translationValue = value(of: translation)
+        backdropView.alpha = getBackdropAlpha(at: currentLocation, with: translationValue)
 
-        guard (pre != cur) else { return }
+        guard (previousLocation != currentLocation) else {
+            return
+        }
+
+        let (previousState, nextState) = self.getStateTransition(currentLocation: currentLocation, translation: translationValue)
+        let nextLocation = value(of: layoutAdapter.surfaceLocation(for: nextState))
+        let startLocation = value(of: layoutAdapter.surfaceLocation(for: previousState))
+        var animationCompletionFraction = (currentLocation - nextLocation) / (startLocation - nextLocation)
+
+        if translation.y < 0 {
+            animationCompletionFraction = 1 - animationCompletionFraction
+        }
+
+        let animator: UIViewPropertyAnimator?
+        switch (previousState, nextState) {
+            case (.tip, .tip) where startLocation < nextLocation:
+                animator = self.dragDependentAnimators.tipToHalfAnimator
+            case (.tip, .half), (.half, .tip):
+                animator = self.dragDependentAnimators.tipToHalfAnimator
+            case (.half, .full), (.full, .half):
+                animator = self.dragDependentAnimators.halfToFullAnimator
+            case (.full, .full) where startLocation > nextLocation:
+                animator = self.dragDependentAnimators.halfToFullAnimator
+            default:
+                animator = nil
+        }
+
+        animator?.isReversed = false
+        animator?.fractionComplete = animationCompletionFraction
 
         if let vc = ownerVC {
             vc.delegate?.floatingPanelDidMove?(vc)
@@ -836,6 +902,27 @@ class Core: NSObject, UIGestureRecognizerDelegate {
                 completion()
         })
         moveAnimator?.startAnimation()
+
+        let currentLocation = self.value(of: self.layoutAdapter.surfaceLocation)
+        let targetLocation = self.value(of: self.layoutAdapter.surfaceLocation(for: targetPosition))
+        let startState = self.getStateTransition(currentLocation: currentLocation, translation: velocity).previousState
+        let animator: UIViewPropertyAnimator?
+        switch (startState, targetPosition) {
+            case (.tip, .tip) where currentLocation < targetLocation:
+                animator = self.dragDependentAnimators.tipToHalfAnimator
+            case (.tip, .half), (_, .tip):
+                animator = self.dragDependentAnimators.tipToHalfAnimator
+            case (_, .full), (.full, .half):
+                animator = self.dragDependentAnimators.halfToFullAnimator
+            case (.full, .full) where currentLocation > targetLocation:
+                animator = self.dragDependentAnimators.halfToFullAnimator
+            default:
+                animator = nil
+        }
+
+        animator?.isReversed = startState.order > targetPosition.order
+        animator?.continueAnimation(withTimingParameters: nil, durationFactor: 0)
+
         state = targetPosition
     }
 
@@ -1180,5 +1267,21 @@ private class NumericSpringAnimator: NSObject {
         let det = f + h2 * o2
         x = (f * x + h * v + h2 * o2 * xt) / det
         v = (v + h * o2 * (xt - x)) / det
+    }
+}
+
+public class CustomerPropertyAnimator: UIViewPropertyAnimator {
+    public var name: String?
+
+    public override var fractionComplete: CGFloat {
+        didSet {
+            print("\(name): fraction complete: \(self.fractionComplete)")
+        }
+    }
+
+    public override var isReversed: Bool {
+        didSet {
+            print("\(name): is reversed: \(self.isReversed)")
+        }
     }
 }

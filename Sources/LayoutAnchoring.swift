@@ -5,6 +5,7 @@ import UIKit
 /// An interface for implementing custom layout anchor objects.
 @objc public protocol FloatingPanelLayoutAnchoring {
     var referenceGuide: FloatingPanelLayoutReferenceGuide { get }
+    var inset: CGFloat { get }
     func layoutConstraints(_ fpc: FloatingPanelController, for position: FloatingPanelPosition) -> [NSLayoutConstraint]
 }
 
@@ -30,7 +31,7 @@ import UIKit
         self.referenceEdge = edge
         self.isAbsolute = false
     }
-    let inset: CGFloat
+    public let inset: CGFloat
     let isAbsolute: Bool
     /// The reference rectangle area for the inset.
     @objc public let referenceGuide: FloatingPanelLayoutReferenceGuide
@@ -94,6 +95,8 @@ public extension FloatingPanelLayoutAnchor {
 
 /// A layout anchor object that anchors a panel in a state using the intrinsic size for a content.
 @objc final public class FloatingPanelIntrinsicLayoutAnchor: NSObject, FloatingPanelLayoutAnchoring /*, NSCopying */ {
+    public var inset: CGFloat = 0
+
     /// Initializes and returns a layout anchor object to specify an absolute offset value for the position of a panel.
     ///
     /// The offset is a distance from a position at which a panel displays the entire content.
